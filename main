@@ -1,0 +1,63 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Feb 21 15:09:29 2018
+
+main.py
+
+################################################################################
+#                                                                              #
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!IMPORTANT!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!#
+#                                                                              #
+# BE CAREFUL NOT HITTING RUN ON THE SCRIPT WITHOUT THINKING WHAT YOU ARE DOING #
+#                                                                              #
+#              read, pre-filt, decimate, instrument correction                 #
+################################################################################
+
+
+This script will do the preliminary task for Canoe Reach dataset
+Workflow:
+        0) Requires to have a continuous stream of signal traces; preferably in .miniseed format.   
+        1) Now, this is ready to be preprocessed for futher application, such as Energy-stack Kurtosis detection method.
+
+@author: joshuapurba
+"""
+
+import sys
+import subprocess
+from read_decimate_resp import load_overlap_3C
+import glob
+from obspy import read,Stream
+
+dataset_folder='/scratch/joshuapurba/dataset/Test_merge/all_raw_merged_daily/'+month+'/' #ALL DATASET SO FAR
+saving_dir='/scratch/joshuapurba/dataset/Test_merge/all_raw_merged_daily_processed/'+month+'/'
+
+#%% 1a) read, decimate, remove resp, save
+#               CHANGE THE path if neccessary
+#========== Combining 26 hours: 1 hour before, 24 hours, and 1 hour after
+##################### DONE AS PER April-12 
+
+
+#%% 1c: read, pre-filt, decimate, instrument correction
+
+#choose any preferable months of your miniseed files 
+for month in ['09','10','11','12']: 
+    pre_filt=[0.005,0.006,20.0,25.0]
+    output="VEL"
+    water_level=60
+
+    seed_files=sorted(glob.glob(dataset_folder+"*seed"))
+    st=Stream()
+    ifile = 0 
+
+    for file in seed_files:
+        print('reading '+file)    
+        st=read(file)
+        st.sort()
+
+        stcorr=load_overlap_3C(saving_dir=saving_dir,output=output,pre_filt=pre_filt,water_level=water_level,st=st) #resp removal using THE MAIN WAY
+    print('successful for month '+month)
+
+#%%
+
+
+
