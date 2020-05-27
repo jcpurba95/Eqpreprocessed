@@ -1,0 +1,466 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Feb 21 14:15:07 2018
+
+What this script does:
+    1) Read
+    2) Decimate from 200 Hz to 50 Hz so that CRG02 has the same sampling rate with others
+    3) Remove instrument response
+    4) Saving them, and now they are ready for further processes
+@author: joshuapurba
+"""
+
+#%% Read, Decimate
+######### THIS is WORKING WELL BUT AT 20171230_19 due to wrong configuration of station CRG11
+######### Therefore, consider working with the following function: read_dec_resp_b
+#################################################
+def read_dec_resp(dataset_folder,pre_filt,output,water_level):
+    from obspy import read, read_inventory,Trace
+    import glob
+    import os
+
+    resp_path=('/scratch/joshuapurba/dataset/Metadata_all/')
+    #dataset_folder='/scratch/joshuapurba/dataset/Test_merge/test0/'
+    dataset=sorted(glob.glob(dataset_folder+'*seed'))
+
+    for file in (dataset): #for loop in the dataset for each m.seed file
+    
+        if os.stat(file).st_size != 0: #if file is not empty, then process it!!!
+            st=read(file)
+            stcorr=st.copy()
+            idx_tr=0
+            print('processing instrument response, rewriting '+file[-24:])
+            for tr in st: #loop for all traces in one stream
+                if tr.stats.sampling_rate == 200: #for all stations but CRG02, decimate from 200 Hz to 50 Hz
+                    ns=4
+                else:  #for CRG02
+                    ns=2
+                tr.decimate(ns,no_filter=True) #for CRG02, decimate the 100 to 50 Hz sampling rate
+    
+                print('tr= '+tr.stats.station+'.'+tr.stats.channel)
+                #%% remove resp on each trace
+                resp_files = sorted(glob.glob(resp_path+'*'+tr.stats.station+'*resp'))
+                inv = read_inventory(resp_files[0])
+                tr.remove_response(inventory=inv, pre_filt=pre_filt, output=output,plot=False,water_level=water_level)
+                stcorr[idx_tr] =Trace(data=tr.data, header=tr.stats)
+                #print('processing '+tr.stats.station+'.'+tr.stats.channel)
+                #print(stcorr[idx_tr].data)
+                #print(tr.data)
+                idx_tr=idx_tr+1
+
+            #%% saving it into miniseed file
+            #stcorr.write(file[:-9]+'_test', format="MSEED",encoding='STEIM1')
+            stcorr.write(file, format="MSEED")
+
+        else:
+             print('not processing instrument response, empty data '+file[-24:])
+
+    return(stcorr)
+
+
+#%% Read, Decimate
+######### THIS is WORKING WELL for 20171230_19. Exclude CRG11
+#################################################
+def read_dec_resp_b(dataset_folder,pre_filt,output,water_level):
+    
+    from obspy import read, read_inventory,Trace,Stream
+    import glob
+    import os
+
+    resp_path=('/scratch/joshuapurba/dataset/Metadata_all/')
+    #dataset_folder='/scratch/joshuapurba/dataset/Test_merge/test0/'
+    dataset=sorted(glob.glob(dataset_folder+'*seed'))
+
+    for file in (dataset): #for loop in the dataset for each m.seed file
+    
+        if os.stat(file).st_size != 0: #if file is not empty, then process it!!!
+            st=read(file)
+            stcorr=Stream()
+            idx_tr=0
+            print('processing instrument response, rewriting '+file[-24:])
+         
+            for tr in st: #loop for all traces in one stream
+                if tr.stats.station!='CRG11': #If station is not CRG11 at 20171230_19, then process it. Exclude CRG11 for they are inconsistent.
+                    if tr.stats.sampling_rate == 200: #for all stations but CRG02, decimate from 200 Hz to 50 Hz
+                        ns=4
+                    else:  #for CRG02
+                        ns=2
+                    tr.decimate(ns,no_filter=True) #for CRG02, decimate the 100 to 50 Hz sampling rate
+    
+                    print('tr= '+tr.stats.station+'.'+tr.stats.channel)
+                    #%% remove resp on each trace
+                    resp_files = sorted(glob.glob(resp_path+'*'+tr.stats.station+'*resp'))
+                    inv = read_inventory(resp_files[0])
+                    tr.remove_response(inventory=inv, pre_filt=pre_filt, output=output,plot=False,water_level=water_level)
+                    #stcorr[idx_tr] =Trace(data=tr.data, header=tr.stats)
+                    stcorr.append(Trace(data=tr.data, header=tr.stats))
+
+                    #print('processing '+tr.stats.station+'.'+tr.stats.channel)
+                    #print(stcorr[idx_tr].data)
+                    #print(tr.data)
+                    idx_tr=idx_tr+1
+
+            #%% saving it into miniseed file
+            #stcorr.write(file[:-9]+'_test', format="MSEED",encoding='STEIM1')
+                else:
+                    print('not processing '+tr.stats.station+'.'+tr.stats.channel)
+            stcorr.write(file, format="MSEED")
+
+        else:
+             print('not processing instrument response, empty data '+file[-24:])
+
+    return(stcorr)
+
+#%% Read, Decimate, overlapp combining Atila's loading code, only for 20171230_19. Exclude CRG11
+
+def load_overlap_3Cb(file_path,saving_dir,pre_filt,output,water_level):
+    from obspy import read_inventory,Trace,Stream,read
+    import glob,os
+    #steps:
+    #       1. Prefilter
+    #       2. Decimate
+    #       3. Remove Instrument Response
+    #       4. Save file 
+
+
+    if not os.path.exists(saving_dir):
+        os.makedirs(saving_dir)
+
+    freqmin=0.001 #for pre-filter
+    freqmax=25.0    #for pre-filter
+    
+    resp_path=('/scratch/joshuapurba/dataset/Metadata_all/')
+        
+    if os.stat(file_path).st_size != 0: #if file is not empty, then process it!!!
+
+        st=read(file_path)
+        stcorr=Stream()
+        #print('processing instrument response, rewriting '+file_path[-24:])
+        for tr in st: #loop for all traces in one stream
+             if tr.stats.station!='CRG11': #If station is not CRG11 at 20171230_19, then process it. Exclude CRG11 for they are inconsistent.             
+                 #1. Prefilter
+                 tr.filter("bandpass",freqmin=freqmin, freqmax=freqmax, corners=4, zerophase=True)         
+    
+                #2. Decimate     
+                 if tr.stats.sampling_rate == 200: #for all stations but CRG02, decimate from 200 Hz to 50 Hz
+                     ns=4
+                 else:  #for CRG02
+                     ns=2
+         
+                 tr.decimate(ns,no_filter=True) #for CRG02, decimate the 100 to 50 Hz sampling rate
+    
+                 #print('remove resp for tr= '+tr.stats.station+'.'+tr.stats.channel)
+                #3. remove resp on each trace
+                 resp_files = sorted(glob.glob(resp_path+'*'+tr.stats.station+'*resp'))
+                 inv = read_inventory(resp_files[0])
+                 tr.remove_response(inventory=inv, pre_filt=pre_filt, output=output,plot=False,water_level=water_level)
+         
+                 stcorr.append(Trace(data=tr.data, header=tr.stats))
+
+                #4. saving it into miniseed file
+             stcorr.write(saving_dir+file_path[-24:], format="MSEED")
+    else:
+        print('not processing instrument response, empty data '+file_path[-24:])
+        stcorr=Stream()
+        
+    return(stcorr)
+
+
+#%% Read, Decimate, overlapp combining Atila's loading code
+
+def load_overlap_3C(saving_dir,pre_filt,output,water_level,st):
+    from obspy import read_inventory,Trace,Stream,read
+    import glob,os
+    #steps:
+    #       1. Prefilter
+    #       2. Decimate
+    #       3. Remove Instrument Response
+    #       4. Save file 
+
+
+    if not os.path.exists(saving_dir):
+        os.makedirs(saving_dir)
+
+    freqmin=0.001 #for pre-filter
+    freqmax=25.0    #for pre-filter
+    
+    resp_path=('/scratch/joshuapurba/dataset/Metadata_all/')
+        
+    if 1: #if file is not empty, then process it!!!
+
+        #st=read(file_path)
+        stcorr=Stream()
+        #print('processing instrument response, rewriting '+file_path[-24:])
+        for tr in st: #loop for all traces in one stream
+             print('start processing for '+tr.stats.station+'_'+tr.stats.channel)            
+            #1. Prefilter
+             tr.filter("bandpass",freqmin=freqmin, freqmax=freqmax, corners=4, zerophase=True)         
+    
+            #2. Decimate  to 50 Hz 
+             if tr.stats.sampling_rate == 200: #for all stations but CRG02, decimate from 200 Hz to 50 Hz
+                 ns=4
+             elif tr.stats.sampling_rate == 100:  #for CRG02
+                 ns=2
+             elif tr.stats.sampling_rate == 50:
+                 ns=1
+         
+             tr.decimate(factor=ns,no_filter=True) #for CRG02, decimate the 100 to 50 Hz sampling rate
+    
+            #3. remove resp on each trace
+             resp_files = sorted(glob.glob(resp_path+'*'+tr.stats.station+'*resp'))
+             inv = read_inventory(resp_files[0])
+             tr.remove_response(inventory=inv, pre_filt=pre_filt, output=output,plot=False,water_level=water_level)
+         
+             stcorr.append(Trace(data=tr.data, header=tr.stats))
+
+#        4. saving it into miniseed file: i.e. 20171001.miniseed
+        stcorr.write(saving_dir+str(st[0].stats.starttime+3600)[0:4]+str(st[0].stats.starttime+3600)[5:7]+str(st[0].stats.starttime+3600)[8:10]+".miniseed",format="MSEED")
+#        print('uncomment to save the corrected instrument')   
+    else:
+        #print('not processing instrument response, empty data ')
+        stcorr=Stream()
+        
+    return(stcorr)
+
+
+#%% Read, Decimate, for mag_code
+
+def load_overlap_mag_code(pre_filt,output,water_level,st):
+    from obspy import read_inventory,Trace,Stream
+    import glob,os
+    #steps:
+    #       1. Prefilter
+    #       2. Decimate TO 100 SAMPLING RATE INSTEAD OF 50!!!!!
+    #       3. Remove Instrument Response
+
+
+
+    freqmin=0.0001 #for pre-filter
+    freqmax=50.0    #for pre-filter to 100 Hz sampling freq
+    
+    resp_path=('/scratch/joshuapurba/dataset/Metadata_all/')
+        
+    if 1: #if file is not empty, then process it!!!
+
+        #st=read(file_path)
+        stcorr=Stream()
+        #print('processing instrument response, rewriting '+file_path[-24:])
+        for tr in st: #loop for all traces in one stream
+#             print('start processing for '+tr.stats.station+'_'+tr.stats.channel)            
+            #1. Prefilter before decimating
+             tr.filter("bandpass",freqmin=freqmin, freqmax=freqmax, corners=4, zerophase=True)         
+    
+            #2. Decimate  to 100 Hz 
+             if tr.stats.sampling_rate == 200: #for all stations but CRG02, decimate from 200 Hz to 50 Hz
+                 ns=2
+             elif tr.stats.sampling_rate == 100:  #for CRG02
+                 ns=1
+#                 print('sampling_rate is 100')
+
+             elif tr.stats.sampling_rate == 50:
+                 error
+#                 print('sampling_rate is 50')
+         
+             tr.decimate(factor=ns,no_filter=True) #for CRG02, decimate the 100 to 50 Hz sampling rate
+    
+            #3. remove resp on each trace
+             resp_files = sorted(glob.glob(resp_path+'*'+tr.stats.station+'*resp'))
+             inv = read_inventory(resp_files[0])
+             tr.remove_response(inventory=inv, pre_filt=pre_filt, output=output,plot=False,water_level=water_level)
+         
+             stcorr.append(Trace(data=tr.data, header=tr.stats))
+
+#        4. saving it into miniseed file: i.e. 20171001.miniseed
+#        stcorr.write(saving_dir+str(st[0].stats.starttime+3600)[0:4]+str(st[0].stats.starttime+3600)[5:7]+str(st[0].stats.starttime+3600)[8:10]+".miniseed",format="MSEED")
+#        print('uncomment to save the corrected instrument')   
+    else:
+        #print('not processing instrument response, empty data ')
+        stcorr=Stream()
+        
+    return(stcorr)
+
+#%% Read, Decimate, overlapp for rotation PVH in the MTFit code 
+
+def load_overlap_PVH(saving_dir,pre_filt,output,water_level,st,st_id):
+    from obspy import read_inventory,Trace,Stream
+    import glob,os
+    #steps:
+    #       1. Prefilter
+    #       2. Decimate
+    #       3. Remove Instrument Response
+
+
+    if not os.path.exists(saving_dir):
+        os.makedirs(saving_dir)
+
+    freqmin=0.001 #for pre-filter
+    freqmax=25.0    #for pre-filter
+    
+    resp_path=('/scratch/joshuapurba/dataset/Metadata_all/')
+        
+    if 1: #if file is not empty, then process it!!!
+        idx=0 #index for trace
+        #st=read(file_path)
+        stcorr=Stream()
+        #print('processing instrument response, rewriting '+file_path[-24:])
+        for tr in st: #loop for all traces in one stream
+             if idx not in range(3*st_id,3*st_id+3): #if trace id is the one to be corrected, do it. Otherwise, skip it.
+                 continue
+             
+             print('start processing for '+tr.stats.station+'_'+tr.stats.channel)            
+            #1. Prefilter
+             tr.filter("bandpass",freqmin=freqmin, freqmax=freqmax, corners=4, zerophase=True)         
+    
+            #2. Decimate  to 50 Hz 
+             if tr.stats.sampling_rate == 200: #for all stations but CRG02, decimate from 200 Hz to 50 Hz
+                 ns=4
+             elif tr.stats.sampling_rate == 100:  #for CRG02
+                 ns=2
+             elif tr.stats.sampling_rate == 50:
+                 ns=1
+         
+             tr.decimate(factor=ns,no_filter=True) #for CRG02, decimate the 100 to 50 Hz sampling rate
+    
+            #3. remove resp on each trace
+             resp_files = sorted(glob.glob(resp_path+'*'+tr.stats.station+'*resp'))
+             inv = read_inventory(resp_files[0])
+             tr.remove_response(inventory=inv, pre_filt=pre_filt, output=output,plot=False,water_level=water_level)
+         
+             stcorr.append(Trace(data=tr.data, header=tr.stats))
+             idx+=1
+        #4. saving it into miniseed file: i.e. 20171001.miniseed
+#        stcorr.write(saving_dir+str(st[0].stats.starttime+3600)[0:4]+str(st[0].stats.starttime+3600)[5:7]+str(st[0].stats.starttime+3600)[8:10]+".miniseed",format="MSEED")
+        print('uncomment to save the corrected instrument')   
+    else:
+        #print('not processing instrument response, empty data ')
+        stcorr=Stream()
+        
+    return(stcorr)
+
+#%% Read, Decimate, overlapp combining Atila's loading code
+
+#################################################
+def load_overlap_3C_reverse(file,data,pre_filt,output,water_level,superposition):
+    from obspy import read_inventory,Trace,Stream
+    import glob
+
+    resp_path=('/scratch/joshuapurba/dataset/Metadata_all/')
+
+    st=data
+    stcorr=Stream()
+    idx_tr=0
+    print('processing instrument response, rewriting '+file[-24:])
+    for tr in st: #loop for all traces in one stream
+         if tr.stats.sampling_rate == 200: #for all stations but CRG02, decimate from 200 Hz to 50 Hz
+            ns=4
+         else:  #for CRG02
+            ns=2
+         
+         tr.decimate(ns,no_filter=True) #for CRG02, decimate the 100 to 50 Hz sampling rate
+    
+         print('tr= '+tr.stats.station+'.'+tr.stats.channel)
+         #%% remove resp on each trace
+         resp_files = sorted(glob.glob(resp_path+'*'+tr.stats.station+'*resp'))
+         inv = read_inventory(resp_files[0])
+         tr.remove_response(inventory=inv, pre_filt=pre_filt, output=output,plot=False,water_level=water_level)
+         
+         if superposition!=0:
+             tr.trim(tr.stats.starttime,tr.stats.endtime) #slice it back to 1 hour of data
+         
+         #print(tr)
+         stcorr.append(Trace(data=tr.data, header=tr.stats))
+         #print('processing '+tr.stats.station+'.'+tr.stats.channel)
+         #print(stcorr[idx_tr].data)
+         #print(tr.data)
+         idx_tr=idx_tr+1
+
+         #%% saving it into miniseed file
+         #stcorr.write(file[:-9]+'_test', format="MSEED",encoding='STEIM1')
+    stcorr.write(file+'_new', format="MSEED")
+
+    return(stcorr)
+
+
+
+
+#%% Read, Decimate
+######### another method using dataless response files
+#################################################
+
+def read_dec_resp2(dataset_folder,output):
+    from obspy import read,Stream,Trace
+    from obspy.io.xseed import Parser
+    import glob
+    import os
+
+    resp_path=('/scratch/joshuapurba/dataset/Metadata_all/')
+    #dataset_folder='/scratch/joshuapurba/dataset/Test_merge/test0/'
+    dataset=sorted(glob.glob(dataset_folder+'*seed'))
+
+    for file in (dataset): #for loop in the dataset for each m.seed file
+    
+        if os.stat(file).st_size != 0: #if file is not empty, then process it!!!
+            st=read(file)
+            stcorr=st.copy()
+            print('processing instrument response, rewriting '+file[-24:])
+            idx_tr=0
+            for tr in st: #loop for all traces in one stream
+#                if tr.stats.sampling_rate == 200: #for all stations but CRG02, decimate from 200 Hz to 100 Hz
+#                    ns=4
+#                else:  #for CRG02
+#                    ns=2
+#                tr.decimate(ns,no_filter=True) #keep the 100 Hz sampling rate
+    
+        
+                #%% remove resp on each trace
+                resp_files = sorted(glob.glob(resp_path+'*'+tr.stats.station+'*dataless'))
+                parser = Parser(resp_files[0])
+                tr.simulate(seedresp={'filename': parser, 'units': output})
+                stcorr[idx_tr] = Trace(data=tr.data.astype('int32'), header=tr.stats)
+                #stcorr[idx_tr] = Trace(data=tr.data, header=tr.stats)
+
+                print('processing '+tr.stats.station)
+                idx_tr=idx_tr+1
+            #%% saving it into miniseed file
+            #stcorr.write(file[:-9]+'_test', format="MSEED",encoding='STEIM1')               
+        else:
+             print('not processing instrument response, empty data '+file[-24:])
+    return(stcorr)            
+#%% Read, Decimate
+######### another method using another approach
+#################################################             
+def read_dec_resp3(dataset_folder,pre_filt,output,water_level):
+    from obspy import read, read_inventory,Stream,Trace
+    import glob
+    import os
+
+    resp_path=('/scratch/joshuapurba/dataset/Metadata_all/')
+    #dataset_folder='/scratch/joshuapurba/dataset/Test_merge/test0/'
+    dataset=sorted(glob.glob(dataset_folder+'*seed'))
+
+    for file in (dataset): #for loop in the dataset for each m.seed file
+    
+        if os.stat(file).st_size != 0: #if file is not empty, then process it!!!
+            st=read(file)
+            print('processing instrument response, rewriting '+file[-24:])
+            for tr in st: #loop for all traces in one stream
+#                if tr.stats.sampling_rate == 200: #for all stations but CRG02, decimate from 200 Hz to 100 Hz
+#                    ns=4
+#                else:  #for CRG02
+#                    ns=2
+#                tr.decimate(ns,no_filter=True) #keep the 100 Hz sampling rate
+    
+        
+                #%% remove resp on each trace
+                resp_files = sorted(glob.glob(resp_path+'*'+tr.stats.station+'*resp'))
+                inv = read_inventory(resp_files[0])
+                
+                st.attach_response(inv)
+                tr.remove_response(inventory=inv, pre_filt=pre_filt, output=output,plot=False,water_level=water_level)
+                stcorr = Stream([Trace(data=tr.data.astype('int64'), header=tr.stats)]) 
+                #%% saving it into miniseed file
+                stcorr.write(file[:-9]+'_test', format="MSEED")
+        else:
+             print('not processing instrument response, empty data '+file[-24:])
+             
+        return(st,stcorr)
